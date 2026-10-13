@@ -1,10 +1,13 @@
 // =============================================================================
-// draw_all.cxx - wszystkie wykresy z pi0_improved.root (wyjscie anal_res.cxx)
+// draw_improved.cxx - wszystkie wykresy z pi0_improved.root (wyjscie anal.cxx)
 //   ./plots_improved : wykresy 1D (porownania MC/final, rozdzielczosci, metody, skumulowane, klastry)
 //   ./plots_2d       : histogramy 2D MC vs reko, bias/rozdzielczosc w funkcji MC
 // Metody: 0 PP, 1 SplitP, 2 PI, 3 II, 4 SplitI, 5 PH, 6 IH, 7 HH
-// Etapy skumulowane: 1 | 1+2 | 1+2+3 | 1+2+3+4 | 1+2+3+4+5
-// Uzycie:  root -l -q 'draw_all.cxx("pi0_improved.root")'
+// Kazde final pi0 pochodzi z dokladnie jednej metody (kaskada grup, reset kandydata
+// przed kazda grupa), wiec histogramy metod sa rozlaczne, a etapy skumulowane to
+// suma metod do ostatniej metody danej grupy:
+//   1 | 1+2 | 1+2+3 | 1+2+3+4 | 1+2+3+4+5
+// Uzycie:  root -l -q 'draw_improved.cxx("pi0_improved.root")'
 // =============================================================================
 #include <TFile.h>
 #include <TH1D.h>
@@ -69,8 +72,8 @@ static void overlay(TFile* f, const std::string& part, const std::string& var) {
 
 static void drawRatio(TFile* f, const std::string& part, const std::string& var) {
   TH1D* hMC  = (TH1D*)f->Get(("mc"    + part + "_" + var).c_str());
-  TH1D* hFin = (TH1D*)f->Get(("final" + part + "_" + var).c_str());
-  if (!hMC || !hFin) return;
+  TH1D* hFin = (TH1D*)f->Get(("acc" + part + "_" + var).c_str());
+  if (!hMC || !hFin) { std::cout << "Brak histogramu (ratio): " << part << "_" << var << "\n"; return; }
   TH1D* r = (TH1D*)hFin->Clone(("ratio_" + part + "_" + var).c_str());
   r->SetDirectory(0);
   r->Divide(hFin, hMC, 1, 1, "B");
@@ -99,6 +102,7 @@ static void drawEachMethod(TFile* f, const std::string& part, const std::string&
   c->SaveAs(outPng.c_str());
 }
 
+// suma metod 0..kGroupLast[s] (metody sa rozlaczne, wiec to liczba pi0 znalezionych do etapu s)
 static TH1D* cumulativeHist(TFile* f, const std::string& part, const std::string& var, int s) {
   TH1D* sum = nullptr;
   for (int k = 0; k <= kGroupLast[s]; ++k) {
@@ -219,7 +223,7 @@ void draw_improved(const std::string& in_file = "pi0_improved.root") {
     c1->cd(i + 1);
     if (i == 3) {
       TH1D* h = (TH1D*)f->Get("finalPi0_m");
-      if (!h) continue;
+      if (!h) { std::cout << "Brak histogramu: finalPi0_m\n"; continue; }
       h->SetLineColor(kRed + 1); h->SetLineWidth(2);
       h->Draw("HIST");
     } else overlay(f, "Pi0", pi0Vars[i]);
@@ -247,7 +251,7 @@ void draw_improved(const std::string& in_file = "pi0_improved.root") {
   for (int i = 0; i < 4; ++i) {
     c4->cd(i + 1);
     TH1D* h = (TH1D*)f->Get(others[i]);
-    if (!h) continue;
+    if (!h) { std::cout << "Brak histogramu: " << others[i] << "\n"; continue; }
     h->SetLineWidth(2);
     h->SetFillColorAlpha(kAzure + 1, 0.3);
     h->Draw("HIST");
@@ -267,7 +271,7 @@ void draw_improved(const std::string& in_file = "pi0_improved.root") {
   for (int i = 0; i < 4; ++i) {
     c5->cd(i + 1);
     TH1D* h = (TH1D*)f->Get(resNames[i]);
-    if (!h) continue;
+    if (!h) { std::cout << "Brak histogramu: " << resNames[i] << "\n"; continue; }
     h->SetTitle("");
     h->GetXaxis()->SetTitle(resTitles[i]);
     h->SetLineWidth(2);
@@ -293,44 +297,40 @@ void draw_improved(const std::string& in_file = "pi0_improved.root") {
   }
   c5->SaveAs("./plots_improved/res.png");
 
-  // ---- 6) rho ----
-  TCanvas* c6 = new TCanvas("c6", "rho reco", 1500, 500);
-  c6->Divide(3, 1);
-  const char* rhoVars[3] = {"eta", "E", "mass"};
-  for (int i = 0; i < 3; ++i) {
-    c6->cd(i + 1);
-    TH1D* hMC   = (TH1D*)f->Get(Form("h_rho_%s_mc", rhoVars[i]));
-    TH1D* hReco = (TH1D*)f->Get(Form("h_rho_%s_reco", rhoVars[i]));
-    if (!hMC || !hReco) continue;
-    hMC->SetLineWidth(2);   hMC->SetLineColor(kRed);
-    hReco->SetLineWidth(2); hReco->SetLineColor(kBlue);
-    hMC->SetMaximum(1.2 * std::max(hMC->GetMaximum(), hReco->GetMaximum()));
-    hMC->Draw("HIST");
-    hReco->Draw("HIST SAME");
-    TLegend* leg = new TLegend(0.60, 0.72, 0.89, 0.88);
-    leg->SetBorderSize(0);
-    leg->AddEntry(hMC,   Form("MC (%.0f)", hMC->GetEntries()), "l");
-    leg->AddEntry(hReco, Form("reco (%.0f)", hReco->GetEntries()), "l");
-    leg->Draw();
-  }
-  c6->SaveAs("./plots_improved/rho_reco.png");
-
-  // ---- 7) dR, vertex ----
-  TCanvas* c7 = new TCanvas("c7", "dR i vertex", 1500, 500);
-  c7->Divide(3, 1);
+  // ---- 6) dR, vertex (z, x i y) ----
+  TCanvas* c7 = new TCanvas("c7", "dR i vertex", 1200, 900);
+  c7->Divide(2, 2);
   const char* dRNames[3] = {"finalPi0_dR", "finalGamma_dR", "h_vtx_z"};
   for (int i = 0; i < 3; ++i) {
     c7->cd(i + 1);
     TH1D* h = (TH1D*)f->Get(dRNames[i]);
-    if (!h) continue;
+    if (!h) { std::cout << "Brak histogramu: " << dRNames[i] << "\n"; continue; }
     h->SetLineWidth(2);
     h->SetFillColorAlpha(kAzure + 1, 0.3);
     h->Draw("HIST");
     if (i < 2) gPad->SetLogy();
   }
+  c7->cd(4);
+  {
+    TH1D* hx = (TH1D*)f->Get("h_vtx_x");
+    TH1D* hy = (TH1D*)f->Get("h_vtx_y");
+    if (hx && hy) {
+      hx->SetLineColor(kRed + 1);  hx->SetLineWidth(2);
+      hy->SetLineColor(kBlue + 1); hy->SetLineWidth(2);
+      hx->SetMaximum(1.2 * std::max(hx->GetMaximum(), hy->GetMaximum()));
+      hx->SetTitle(";vertex x, y [mm];N");
+      hx->Draw("HIST");
+      hy->Draw("HIST SAME");
+      TLegend* lv = new TLegend(0.70, 0.75, 0.89, 0.89);
+      lv->SetBorderSize(0);
+      lv->AddEntry(hx, "x", "l");
+      lv->AddEntry(hy, "y", "l");
+      lv->Draw();
+    } else std::cout << "Brak histogramu: h_vtx_x / h_vtx_y\n";
+  }
   c7->SaveAs("./plots_improved/dR_vtx.png");
 
-  // ---- 8) kazda metoda osobno ----
+  // ---- 7) kazda metoda osobno ----
   drawEachMethod(f, "pi0", "E",   "E_{#pi^{0}} [GeV]",            "./plots_improved/pi0_methods_E.png");
   drawEachMethod(f, "pi0", "eta", "#eta_{#pi^{0}}",               "./plots_improved/pi0_methods_eta.png");
   drawEachMethod(f, "pi0", "m",   "m_{#gamma#gamma} [GeV]",       "./plots_improved/pi0_methods_m.png");
@@ -339,7 +339,7 @@ void draw_improved(const std::string& in_file = "pi0_improved.root") {
   drawEachMethod(f, "gam", "eta", "#eta_{#gamma}",                "./plots_improved/gamma_methods_eta.png");
   drawEachMethod(f, "gam", "dR",  "dR(final, nearest MC #gamma)", "./plots_improved/gamma_methods_dR.png");
 
-  // ---- 9) skumulowane ----
+  // ---- 8) skumulowane ----
   TCanvas* c9 = new TCanvas("c9", "pi0 skumulowane", 1200, 900);
   c9->Divide(2, 2);
   c9->cd(1); drawCumulative(f, "pi0", "E",   "E_{#pi^{0}} [GeV]");
@@ -355,7 +355,7 @@ void draw_improved(const std::string& in_file = "pi0_improved.root") {
   c10->cd(3); drawCumulative(f, "gam", "dR",  "dR(final, nearest MC #gamma)");
   c10->SaveAs("./plots_improved/gamma_cumulative.png");
 
-  // ---- 10) good per metoda ----
+  // ---- 9) good per metoda ----
   TH1D* hWin  = (TH1D*)f->Get("h_method");
   TH1D* hGood = (TH1D*)f->Get("h_methodGood");
   if (hWin && hGood) {
@@ -404,7 +404,7 @@ void draw_improved(const std::string& in_file = "pi0_improved.root") {
     c11->SaveAs("./plots_improved/method_good.png");
   } else std::cout << "Brak h_method / h_methodGood w pliku\n";
 
-  // ---- 11) klastry w evencie ----
+  // ---- 10) klastry w evencie ----
   TCanvas* c12 = new TCanvas("c12", "klastry w evencie", 1500, 900);
   c12->Divide(3, 2);
   const char* cntNames[5] = {"h_nImproved", "h_nImprovedTrk", "h_nImpTrue", "h_nNewCl", "h_nVtx"};
@@ -423,7 +423,9 @@ void draw_improved(const std::string& in_file = "pi0_improved.root") {
   }
   c12->SaveAs("./plots_improved/clusters_per_event.png");
 
-  // ---- 12) nCand (5 grup) ----
+  // ---- 11) nCand (5 grup) ----
+  // uwaga: h_nCand_gN jest wypelniany tylko w zdarzeniach, w ktorych grupa N sie uruchomila
+  //        (grupa 2 tylko przy dokladnie 1 potential gamma; grupy 3-5 tylko gdy poprzednie zawiodly)
   TCanvas* c13 = new TCanvas("c13", "liczba kombinacji", 1500, 900);
   c13->Divide(3, 2);
   for (int g = 0; g < kNG; ++g) {
@@ -436,11 +438,12 @@ void draw_improved(const std::string& in_file = "pi0_improved.root") {
     h->SetMinimum(0.5);
     h->Draw("HIST");
     gPad->SetLogy();
-    std::cout << Form("grupa %d: zdarzen %.0f, srednia liczba kombinacji = %.1f\n", g + 1, h->GetEntries(), h->GetMean());
+    std::cout << Form("grupa %d: zdarzen (grupa uruchomiona) %.0f, srednia liczba kombinacji = %.1f\n",
+                      g + 1, h->GetEntries(), h->GetMean());
   }
   c13->SaveAs("./plots_improved/nCand.png");
 
-  // ---- 13) pochodzenie klastrow ----
+  // ---- 12) pochodzenie klastrow ----
   TH1D* hImp    = (TH1D*)f->Get("h_impCat");
   TH1D* hImpTrk = (TH1D*)f->Get("h_impCatTrk");
   TH1D* hPot    = (TH1D*)f->Get("h_potCat");
