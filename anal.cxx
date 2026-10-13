@@ -110,7 +110,7 @@ static bool split2(const std::vector<Hit>& hs, std::vector<Hit>& g1, std::vector
 // =============================================================================
 void anal(const std::string& out_file = "pi0_improved.root",
           double E_CUT = 0.1,                       // min. energia fotonu MC / klastra
-          long   nMax = 0,                          // 0 = wszystkie eventy
+          long   nMax = 10000,                          // 0 = wszystkie eventy
           double winLo = 0.75, double winHi = 1.25, // okno masy: winLo*m(pi0) < m < winHi*m(pi0)
           double splitSep = 0.16, double splitFrac = 0.01,
           double hitDR = 0.2, int nHitsMin = 4) {
@@ -151,9 +151,19 @@ void anal(const std::string& out_file = "pi0_improved.root",
   TH1D* mcPi0_eta   = new TH1D("mcPi0_eta",   "MC #pi^{0};#eta;N",        100, -5, 5);
   TH1D* mcPi0_E     = new TH1D("mcPi0_E",     "MC #pi^{0};E [GeV];N",     40, 0, 10);
   TH1D* mcPi0_m     = new TH1D("mcPi0_m",     "MC #pi^{0};m [GeV];N",     100, 0, 0.5);
+  TH1D* mcPi0_phi   = new TH1D("mcPi0_phi",   "MC #pi^{0};#phi;N", 64, -TMath::Pi(), TMath::Pi());
+  TH1D* accPi0_pt    = new TH1D("accPi0_pt",    "accepted #pi^{0};p_{T} [GeV];N", 30, 0, 6);
+  TH1D* accPi0_eta   = new TH1D("accPi0_eta",   "accepted #pi^{0};#eta;N",        100, -5, 5);
+  TH1D* accPi0_E     = new TH1D("accPi0_E",     "accepted #pi^{0};E [GeV];N",     40, 0, 10);
+  TH1D* accPi0_phi = new TH1D("accPi0_phi", "accepted #pi^{0};#phi;N", 64, -TMath::Pi(), TMath::Pi());
   TH1D* mcGamma_pt  = new TH1D("mcGamma_pt",  "MC #gamma;p_{T} [GeV];N",  30, 0, 6);
   TH1D* mcGamma_eta = new TH1D("mcGamma_eta", "MC #gamma;#eta;N",         100, -5, 5);
   TH1D* mcGamma_E   = new TH1D("mcGamma_E",   "MC #gamma;E [GeV];N",      50, 0, 10);
+  TH1D* mcGamma_phi = new TH1D("mcGamma_phi", "MC #gamma;#phi;N", 64, -TMath::Pi(), TMath::Pi());
+  TH1D* accGamma_pt  = new TH1D("accGamma_pt",  "accepted #gamma;p_{T} [GeV];N",  30, 0, 6);
+  TH1D* accGamma_eta = new TH1D("accGamma_eta", "accepted #gamma;#eta;N",         100, -5, 5);
+  TH1D* accGamma_E   = new TH1D("accGamma_E",   "accepted #gamma;E [GeV];N",      50, 0, 10);
+  TH1D* accGamma_phi = new TH1D("accGamma_phi", "accepted #gamma;#phi;N", 64, -TMath::Pi(), TMath::Pi());
   TH1D* finalPi0_pt    = new TH1D("finalPi0_pt",    "final #pi^{0};p_{T} [GeV];N", 30, 0, 6);
   TH1D* finalPi0_eta   = new TH1D("finalPi0_eta",   "final #pi^{0};#eta;N",        100, -5, 5);
   TH1D* finalPi0_E     = new TH1D("finalPi0_E",     "final #pi^{0};E [GeV];N",     40, 0, 10);
@@ -281,8 +291,8 @@ void anal(const std::string& out_file = "pi0_improved.root",
     if (!havePi0 || photons.size() != 2) continue;
 
     ++nPi0;
-    mcPi0_pt->Fill(pi0MC.Pt()); mcPi0_eta->Fill(pi0MC.Eta()); mcPi0_E->Fill(pi0MC.E()); mcPi0_m->Fill(pi0MC.M());
-    for (const auto& g : photons) { mcGamma_pt->Fill(g.Pt()); mcGamma_eta->Fill(g.Eta()); mcGamma_E->Fill(g.E()); }
+    mcPi0_pt->Fill(pi0MC.Pt()); mcPi0_eta->Fill(pi0MC.Eta()); mcPi0_E->Fill(pi0MC.E()); mcPi0_m->Fill(pi0MC.M()); mcPi0_phi->Fill(pi0MC.Phi());
+    for (const auto& g : photons) { mcGamma_pt->Fill(g.Pt()); mcGamma_eta->Fill(g.Eta()); mcGamma_E->Fill(g.E()); mcGamma_phi->Fill(g.Phi()); }
 
     // ================= technologia kazdego klastra (wg kolekcji) =================
     std::map<IDKey, int> clTech;
@@ -348,13 +358,16 @@ void anal(const std::string& out_file = "pi0_improved.root",
         clInfo[rk] = {a.getWeight(), cat, sim.getPDG()};
       }
     // pochodzenie klastra potential gamma (pierwszy dostepny klaster)
-    for (const auto& g : gams)
+    for (const auto& g : gams){
+      if(g.rec.getClusters().size()>1) std::cout << "Potential gamma with more than one cluster: " << g.rec.getClusters().size() << std::endl;
       for (const auto& c : g.rec.getClusters())
         if (c.isAvailable()) {
+          if(c.getClusters().size()>0) std::cout << "Cluster with more than zero sub-cluster: " << c.getClusters().size() << std::endl;
           auto it = clInfo.find(keyOf(c.getObjectID()));
           h_potCat->Fill(it != clInfo.end() ? it->second.cat : 7);
           break;
         }
+    }
 
     // klastry z dopasowanym sladem (TrackClusterMatch): to nie sa fotony -> pomijane
     IDSet trackMatched;
@@ -367,6 +380,7 @@ void anal(const std::string& out_file = "pi0_improved.root",
     int    bestMethod = -1;
     double bestDm = 1e9;
     long   nCand = 0;      // licznik kombinacji w biezacej grupie
+    auto resetBest = [&]() { bestA = PhI(); bestB = PhI(); bestMethod = -1; bestDm = 1e9; nCand = 0; };
     auto consider = [&](const PhI& a, const PhI& b, int method) {
       ++nCand;
       const double dm = std::fabs((a.p4 + b.p4).M() - kMpi0);
@@ -434,6 +448,7 @@ void anal(const std::string& out_file = "pi0_improved.root",
     // ================= grupa 2: split P, gdy DOKLADNIE 1 potential gamma (metoda 1) =================
     if (!win && gams.size() == 1) {
       nCand = 0;
+      resetBest(); 
       for (const auto& c : gams[0].rec.getClusters())
         if (c.isAvailable()) {
           auto it = clTech.find(keyOf(c.getObjectID()));
@@ -441,31 +456,37 @@ void anal(const std::string& out_file = "pi0_improved.root",
           break;
         }
       h_nCand[1]->Fill(nCand);
+       win = done(1);
     }
-    win = done(1);
+
 
     // ================= grupa 3: P+I (metoda 2), I+I (metoda 3) =================
     if (!win) {
+      resetBest();
       nCand = 0;
       for (const auto& g : gams) for (const auto& ip : improved) consider(g.ph, ip, 2);
       for (size_t i = 0; i < improved.size(); ++i)
         for (size_t j = i + 1; j < improved.size(); ++j) consider(improved[i], improved[j], 3);
       h_nCand[2]->Fill(nCand);
+      win = done(2);
     }
-    win = done(2);
+    
 
     // ================= grupa 4: split kazdego improved klastra (metoda 4) =================
     if (!win) {
+      resetBest();
       nCand = 0;
       for (size_t i = 0; i < improvedCl.size(); ++i)
         trySplit(improvedCl[i], improvedCl[i].getEnergy(), improved[i].tech, 4);
       h_nCand[3]->Fill(nCand);
+         win = done(3);
     }
-    win = done(3);
+ 
 
     // ================= grupa 5: P+H (metoda 5), I+H (metoda 6), H+H (metoda 7) =================
     // H = nowe klastry z hitow nieuzytych w zadnym klastrze (takze w klastrach ze sladem); klasa H, technologia = kolekcja hitow
     if (!win) {
+      resetBest();
       nCand = 0;
       IDSet usedHits;   // hity nalezace do JAKIEGOKOLWIEK klastra
       for (const auto& name : clNames)
@@ -497,8 +518,8 @@ void anal(const std::string& out_file = "pi0_improved.root",
       for (size_t i = 0; i < newCl.size(); ++i)
         for (size_t j = i + 1; j < newCl.size(); ++j) consider(newCl[i], newCl[j], 7);
       h_nCand[4]->Fill(nCand);
+      win = done(4);
     }
-    win = done(4);
 
     // ================= final pi0 i final fotony (tylko pi0 w oknie masy) =================
     if (!win) continue;
@@ -508,6 +529,7 @@ void anal(const std::string& out_file = "pi0_improved.root",
     const double drPi0 = p.DeltaR(pi0MC);
 
     finalPi0_pt->Fill(p.Pt()); finalPi0_eta->Fill(p.Eta()); finalPi0_E->Fill(p.E()); finalPi0_m->Fill(p.M());
+    accPi0_pt->Fill(pi0MC.Pt()); accPi0_eta->Fill(pi0MC.Eta()); accPi0_E->Fill(pi0MC.E()); accPi0_phi->Fill(pi0MC.Phi());
     finalPi0_dR->Fill(drPi0);
     fPi0_E[k]->Fill(p.E()); fPi0_eta[k]->Fill(p.Eta()); fPi0_m[k]->Fill(p.M()); fPi0_dR[k]->Fill(drPi0);
     h_pi_E_res->Fill((pi0MC.E() - p.E()) / pi0MC.E());
@@ -521,6 +543,8 @@ void anal(const std::string& out_file = "pi0_improved.root",
 
     const PhI* fin[2] = {&bestA, &bestB};
 
+    accGamma_pt->Fill(photons[0].Pt()); accGamma_eta->Fill(photons[0].Eta()); accGamma_E->Fill(photons[0].E()); accGamma_phi->Fill(photons[0].Phi());
+    accGamma_pt->Fill(photons[1].Pt()); accGamma_eta->Fill(photons[1].Eta()); accGamma_E->Fill(photons[1].E()); accGamma_phi->Fill(photons[1].Phi());
     // rozdzielczosc fotonow: kazdy foton MC z najblizszym (dR) fotonem final
     for (const auto& mcg : photons) {
       const TLorentzVector& near = (mcg.DeltaR(fin[0]->p4) <= mcg.DeltaR(fin[1]->p4)) ? fin[0]->p4 : fin[1]->p4;
