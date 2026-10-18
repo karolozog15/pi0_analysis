@@ -1,16 +1,3 @@
-// Analiza struktury klastrow EcalBarrel + rysunki 3D hitow (zgodne z anal_res.cxx).
-//   root -l -b -q 'hit3d.cxx("hits3d.root")'
-//
-// 1) Podklastry ScFi / Imaging w klastrach EcalBarrelClusters.
-// 2) Ile klastrow zwraca getClusters() w ReconstructedParticles.
-// 3) Rysunki 3D: hity (gradient energii), gwiazdka = cluster.position,
-//    prosta MC: ciagla = getVertex -> getEndpoint (w zakresie hitow), przerywana = jej przedluzenie.
-//    Status klastra: reco / track / improved.
-// 4) Orphany: ScFi i Imaging istnieja, ale nie sa scalone w Barrel.
-// 5) Przypadki bez Barrel: tylko Imaging albo tylko ScFi. Tabela obecnosci kolekcji.
-//
-// Selekcja zdarzen jak w anal_res.cxx:
-//   pi0 (status 2) + dokladnie 2 fotony MC z pi0 (E > E_CUT, poza 1.3<|eta|<1.6).
 
 #include <edm4hep/MCParticleCollection.h>
 #include <edm4eic/ClusterCollection.h>
@@ -48,22 +35,27 @@
 using ID = std::pair<uint32_t, uint32_t>;
 static ID idOf(const podio::ObjectID& o) { return {o.collectionID, o.index}; }
 
-// ---------------------------------------------------------------- struktury rysunku
+// ---------------------------------------------------------------- drawing structures
 struct Hit   { double x, y, z, E; };
-struct Group { std::string label; int family; std::vector<Hit> hits; }; // family: 0=ScFi(niebieski) 1=Imaging(czerwony) 2=Endcap(zielony)
-struct McLine { TVector3 v, e, mom; };                                  // getVertex, getEndpoint, pęd fotonu MC
+struct Group { std::string label; int family; std::vector<Hit> hits; }; // family: 0=ScFi(blue) 1=Imaging(red) 2=Endcap(green)
+struct McLine { TVector3 v, e, mom; };                                  // getVertex, getEndpoint, MC photon momentum
 struct Extras {
   std::vector<McLine> mc;
   std::vector<std::pair<TVector3, std::string>> stars;                  // cluster.position
 };
 
 static double gViewTheta = 20, gViewPhi = -20, gMarkerSize = 3.0;
-static const int NL = 6; // liczba poziomow energii w gradiencie
-static int colIdx(int family, int lvl) { return 3100 + family * 10 + lvl; }
+static const int NL = 6; // number of energy levels in the gradient
+static int colIdx(int family, int lvl) {
+  static const int scfi[NL] = {kAzure + 7, kAzure + 1, kBlue,     kBlue + 1,   kBlue + 2,   kBlue + 3};
+  static const int img[NL]  = {kOrange + 1, kOrange + 7, kRed - 4, kRed,        kRed + 1,    kRed + 3};
+  static const int ecp[NL]  = {kSpring + 7, kSpring + 5, kGreen,  kGreen + 1,  kGreen + 2,  kGreen + 3};
+  return family == 0 ? scfi[lvl] : family == 1 ? img[lvl] : ecp[lvl];
+}
 
 static void initColors() {
-  // mocne, nasycone kolory: niska E -> wysoka E
-  // ScFi: jasny niebieski -> granat | Imaging: pomarancz -> ciemna czerwien | Endcap: zielen -> ciemna zielen
+  // strong, saturated colors: low E -> high E
+  // ScFi: light blue -> navy | Imaging: orange -> dark red | Endcap: green -> dark green
   const double lo[3][3] = {{0.0, 0.55, 1.0}, {1.0, 0.55, 0.0}, {0.3, 0.9, 0.0}};
   const double hi[3][3] = {{0.0, 0.0, 0.6},  {0.7, 0.0, 0.0},  {0.0, 0.4, 0.0}};
   for (int f = 0; f < 3; ++f)
@@ -75,7 +67,7 @@ static void initColors() {
     }
 }
 
-// ---------------------------------------------------------------- klastry / hity (jak w anal_res.cxx)
+// ---------------------------------------------------------------- clusters / hits (as in anal_res.cxx)
 static void markCluster(const edm4eic::Cluster& c, std::set<ID>& used, int depth = 0) {
   if (!c.isAvailable()) return;
   used.insert(idOf(c.getObjectID()));
@@ -93,8 +85,8 @@ static TVector3 posOf(const edm4eic::Cluster& c) {
   return TVector3(c.getPosition().x, c.getPosition().y, c.getPosition().z);
 }
 
-// ---------------------------------------------------------------- przyciecie prostej do pudelka
-// prosta a + t(b-a) przyciana do [lo,hi]; infinite=false -> t w [0,1]
+// ---------------------------------------------------------------- clipping a line to a box
+// line a + t(b-a) clipped to [lo,hi]; infinite=false -> t in [0,1]
 static bool clipLine(const double a[3], const double b[3], const double lo[3], const double hi[3],
                      bool infinite, double& t0, double& t1) {
   t0 = infinite ? -1e9 : 0; t1 = infinite ? 1e9 : 1;
@@ -109,13 +101,13 @@ static bool clipLine(const double a[3], const double b[3], const double lo[3], c
   return true;
 }
 
-// ---------------------------------------------------------------- rysowanie 3D
+// ---------------------------------------------------------------- 3D drawing
 static bool drawExample(TFile* fout, const std::string& name, const std::string& title,
                         const std::vector<Group>& groups, bool savePng, const Extras& ex) {
   double lo[3] = {1e18, 1e18, 1e18}, hi[3] = {-1e18, -1e18, -1e18}, Emax = 0;
   size_t nTot = 0;
   auto ext = [&](double z, double x, double y) {
-    const double v[3] = {z, x, y}; // [0]=z (os wiazki, poziomo), [1]=x, [2]=y (pion)
+    const double v[3] = {z, x, y}; // [0]=z (beam axis, horizontal), [1]=x, [2]=y (vertical)
     for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], v[k]); hi[k] = std::max(hi[k], v[k]); }
   };
   for (auto& g : groups) for (auto& h : g.hits) { ext(h.z, h.x, h.y); Emax = std::max(Emax, h.E); ++nTot; }
@@ -149,12 +141,12 @@ static bool drawExample(TFile* fout, const std::string& name, const std::string&
     if (lastPm) leg->AddEntry(lastPm, Form("%s: %zu hit, #SigmaE=%.3f GeV", g.label.c_str(), g.hits.size(), eSum), "p");
   }
 
-  // proste MC: ciagla = vertex->endpoint (w zakresie hitow), przerywana = przedluzenie
+  // MC lines: solid = vertex->endpoint (within the hit range), dashed = extension
   bool legSeg = false, legExt = false;
   for (const auto& m : ex.mc) {
     const double segLen = (m.e - m.v).Mag();
     const bool hasSeg = segLen > 1e-6;
-    const TVector3 dir = hasSeg ? (m.e - m.v) : m.mom;   // vertex==endpoint -> uzyj pedu
+    const TVector3 dir = hasSeg ? (m.e - m.v) : m.mom;   // vertex==endpoint -> use momentum
     const double a[3] = {m.v.Z(), m.v.X(), m.v.Y()};
     const double b[3] = {m.v.Z() + dir.Z(), m.v.X() + dir.X(), m.v.Y() + dir.Y()};
     double t0, t1;
@@ -177,7 +169,7 @@ static bool drawExample(TFile* fout, const std::string& name, const std::string&
   }
   if (!legSeg) leg->AddEntry((TObject*)nullptr, "MC endpoint nie dochodzi do hitow", "");
 
-  // cluster.position jako gwiazdka
+  // cluster.position as a star
   for (auto& s : ex.stars) {
     auto* st = new TPolyMarker3D(1);
     st->SetPoint(0, s.first.Z(), s.first.X(), s.first.Y());
@@ -194,7 +186,7 @@ static bool drawExample(TFile* fout, const std::string& name, const std::string&
   return true;
 }
 
-// ---------------------------------------------------------------- pliki wejsciowe
+// ---------------------------------------------------------------- input files
 static std::vector<std::string> collectInputFiles(const std::string& dir, const std::string& prefix) {
   std::vector<std::string> files;
   if (!std::filesystem::exists(dir)) return files;
@@ -216,11 +208,11 @@ static double dRpos(const TVector3& a, const TVector3& b) {
   return std::hypot(a.Eta() - b.Eta(), dp);
 }
 
-// ---------------------------------------------------------------- glowna funkcja
+// ---------------------------------------------------------------- main function
 void hit3d(const std::string& out_file = "hits3d.root",
-           int nExamples  = 3,      // ile przykladow na kazdy przypadek
-           int minHits    = 4,      // min. liczba hitow, zeby klaster byl rysowany
-           long maxEvents = -1,     // -1 = wszystkie
+           int nExamples  = 10,      // number of examples per case
+           int minHits    = 4,      // min. number of hits for a cluster to be drawn
+           long maxEvents = 10000,     // -1 = all
            bool savePng   = true,
            double E_CUT   = 0.1) {
   gROOT->SetBatch(true);
@@ -237,7 +229,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
   reader.openFiles(in_file);
   TFile* fout = new TFile(out_file.c_str(), "RECREATE");
 
-  // ---- histogramy orphanow
+  // ---- orphan histograms
   TH1D* h_orphDR     = new TH1D("h_orphDR",     "orphan ScFi-Img: dR;dR;par", 100, 0, 1.5);
   TH1D* h_mergedDR   = new TH1D("h_mergedDR",   "scalone ScFi-Img w Barrel: dR;dR;par", 100, 0, 1.5);
   TH1D* h_orphSameMC = new TH1D("h_orphSameMC", "orphan par: 0 rozne MC, 1 to samo MC, 2 brak asocjacji;;par", 3, -0.5, 2.5);
@@ -245,14 +237,14 @@ void hit3d(const std::string& out_file = "hits3d.root",
   TH1D* h_orphEimg   = new TH1D("h_orphEimg",   "orphan Img: E;E [GeV];N", 50, 0, 10);
   long nPairSameMC = 0, nPairDiffMC = 0, nPairNoAssoc = 0;
 
-  // ---- statystyki pkt 1 / 2
-  std::map<std::pair<int, int>, long> subDist; // (nScFi, nImaging) -> ile klastrow Barrel
+  // ---- statistics for items 1 / 2
+  std::map<std::pair<int, int>, long> subDist; // (nScFi, nImaging) -> number of Barrel clusters
   long nBarrelClu = 0, nSubOther = 0, nBarrelCluNoHits = 0;
   std::map<size_t, long> recCluDist, recCluDistPhoton;
   int nDebugRec = 0;
-  std::map<std::string, long> presence;   // wzorzec obecnosci kolekcji, np. "BSI", "-SI", "--I"
+  std::map<std::string, long> presence;   // collection presence pattern, e.g. "BSI", "-SI", "--I"
 
-  // ---- liczniki przykladow
+  // ---- example counters
   std::map<std::string, int> nSaved;
   const std::vector<std::string> cases = {"BARREL_both", "BARREL_onlyImaging", "BARREL_onlyScFi",
                                           "ORPHAN_ScFi_and_Imaging", "NOBARREL_onlyImaging", "NOBARREL_onlyScFi",
@@ -265,7 +257,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
     if (maxEvents > 0 && nEv > maxEvents) break;
     auto frame = podio::Frame(std::move(entry));
 
-    // ================= selekcja jak w anal_res.cxx =================
+    // ================= selection as in anal_res.cxx =================
     const auto& mc = frame.get<edm4hep::MCParticleCollection>("MCParticles");
     bool havePi0 = false;
     for (const auto& p : mc) if (p.getPDG() == 111 && p.getGeneratorStatus() == 2) { havePi0 = true; break; }
@@ -282,7 +274,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
       if (1.3 < std::fabs(mom.Eta()) && std::fabs(mom.Eta()) < 1.6) continue;
       McLine m{TVector3(p.getVertex().x, p.getVertex().y, p.getVertex().z),
                TVector3(p.getEndpoint().x, p.getEndpoint().y, p.getEndpoint().z), mom};
-      if (nSel < 20)   // kontrola endpointu na pierwszych zdarzeniach
+      if (nSel < 20)   // endpoint check on the first events
         std::cout << "[MC gamma ev" << nEv << "] E=" << mom.Mag() << " vtx=(" << m.v.X() << "," << m.v.Y() << "," << m.v.Z()
                   << ") end=(" << m.e.X() << "," << m.e.Y() << "," << m.e.Z()
                   << ") |end-vtx|=" << (m.e - m.v).Mag() << " mm\n";
@@ -306,7 +298,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
     for (const auto& c : epClusters)    epIDs.insert(idOf(c.getObjectID()));
     for (const auto& c : enClusters)    enIDs.insert(idOf(c.getObjectID()));
 
-    // ---- status klastra: uzyty przez reko / dopasowany slad / improved
+    // ---- cluster status: used by reco / matched track / improved
     std::set<ID> usedByReco, trackMatched;
     for (const auto& rp : recs) for (const auto& c : rp.getClusters()) markCluster(c, usedByReco);
     for (const char* name : {"EcalBarrelTrackClusterMatches", "EcalEndcapPTrackClusterMatches", "EcalEndcapNTrackClusterMatches"})
@@ -319,7 +311,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
       return "improved";
     };
 
-    // ---- asocjacje klaster -> MC (najlepsza waga)
+    // ---- cluster -> MC associations (best weight)
     std::map<ID, std::pair<double, ID>> best;
     for (const char* an : {"EcalBarrelScFiClusterAssociations", "EcalBarrelImagingClusterAssociations",
                            "EcalBarrelClusterAssociations"})
@@ -335,11 +327,11 @@ void hit3d(const std::string& out_file = "hits3d.root",
       Extras ex; ex.mc = mcLines; ex.stars = std::move(stars); return ex;
     };
 
-    // ---- statystyka obecnosci kolekcji
+    // ---- collection presence statistics
     presence[std::string(bClusters.empty() ? "-" : "B") + (bClustersScFi.empty() ? "-" : "S") +
              (bClustersImg.empty() ? "-" : "I")]++;
 
-    // ---- przypadki bez Barrel: tylko jedna technologia
+    // ---- cases without Barrel: only one technology
     auto drawSingle = [&](const edm4eic::ClusterCollection& cc, const std::string& cs, int family, const char* lab) {
       if (nSaved[cs] >= nExamples) return;
       Group g{lab, family, {}};
@@ -356,7 +348,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
     if (bClusters.empty() && bClustersImg.empty() && !bClustersScFi.empty())
       drawSingle(bClustersScFi, "NOBARREL_onlyScFi", 0, "ScFi");
 
-    // ======================= PKT 1: skladniki EcalBarrelClusters =======================
+    // ======================= ITEM 1: constituents of EcalBarrelClusters =======================
     std::set<ID> usedScFi, usedImg;
     for (const auto& c : bClusters) {
       ++nBarrelClu;
@@ -388,7 +380,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
       }
     }
 
-    // ======================= orphany: ScFi / Imaging poza klastrem Barrel =======================
+    // ======================= orphans: ScFi / Imaging outside a Barrel cluster =======================
     {
       std::vector<edm4eic::Cluster> orphS, orphI;
       for (const auto& c : bClustersScFi) if (!usedScFi.count(idOf(c.getObjectID()))) orphS.push_back(c);
@@ -432,7 +424,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
       }
     }
 
-    // ======================= Endcapy =======================
+    // ======================= Endcaps =======================
     auto doEndcap = [&](const edm4eic::ClusterCollection& cc, const std::string& cs) {
       for (const auto& c : cc) {
         if (nSaved[cs] >= nExamples) break;
@@ -448,7 +440,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
     doEndcap(epClusters, "EndcapP");
     doEndcap(enClusters, "EndcapN");
 
-    // ======================= PKT 2: ReconstructedParticles -> getClusters() =======================
+    // ======================= ITEM 2: ReconstructedParticles -> getClusters() =======================
     auto origin = [&](const edm4eic::Cluster& c) -> std::string {
       const ID k = idOf(c.getObjectID());
       if (bIDs.count(k))    return "EcalBarrelClusters";
@@ -479,7 +471,7 @@ void hit3d(const std::string& out_file = "hits3d.root",
   fout->Write();
   fout->Close();
 
-  // ======================= wydruk =======================
+  // ======================= printout =======================
   std::cout << "\nWybrane zdarzenia (pi0 -> 2 fotony MC): " << nSel << " / " << nEv << "\n";
   std::cout << "\n=== PKT 1: podklastry w EcalBarrelClusters (" << nBarrelClu << " klastrow) ===\n";
   std::cout << "  (nScFi, nImaging) -> liczba klastrow\n";
