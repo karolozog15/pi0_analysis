@@ -1,3 +1,8 @@
+// =============================================================================
+// draw_simple.cxx - wykresy z pi0_simple.root (wyjscie anal_simple.cxx)
+// Kazdy histogram do osobnego PNG w ./plots_simple/
+// Uzycie: root -l -q 'draw_simple.cxx("pi0_simple.root")'
+// =============================================================================
 #include <TFile.h>
 #include <TH1D.h>
 #include <TH2D.h>
@@ -144,9 +149,9 @@ static void drawCum(TFile* f, const char* base, const char* png, const char* xTi
 }
 
 // ---------------------------------------------------------------- 3) wydajnosc: MC vs accepted + ratio pod spodem
-static void drawEfficiency(TFile* f,std::string val) {
-  TH1D* hMC  = GetHist<TH1D>(f, Form("mcPi0_%s", val.c_str()));
-  TH1D* hAcc = GetHist<TH1D>(f, Form("accPi0_%s", val.c_str()));
+static void drawEfficiency(TFile* f) {
+  TH1D* hMC  = GetHist<TH1D>(f, "mcPi0_eta");
+  TH1D* hAcc = GetHist<TH1D>(f, "accPi0_eta");
   if (!hMC || !hAcc) return;
 
   const double etaLo = 1.3, etaHi = 1.6;   // pomijany zakres (szczelina)
@@ -167,7 +172,7 @@ static void drawEfficiency(TFile* f,std::string val) {
     }
   };
 
-  save(Form("eta_mc_vs_acc_%s", val.c_str()), 900, 900, [&]() {
+  save("eta_mc_vs_acc", 900, 900, [&]() {
     TVirtualPad* cv = gPad;
     TPad* pTop = new TPad("pTop", "", 0, 0.30, 1, 1.0);
     TPad* pBot = new TPad("pBot", "", 0, 0.00, 1, 0.30);
@@ -179,31 +184,29 @@ static void drawEfficiency(TFile* f,std::string val) {
 
     // ---- gora: MC i accepted ----
     pTop->cd();
-    pTop->SetLogy();
     StyleHist(hMC,  kRed + 1);
     StyleHist(hAcc, kBlue + 1);
     StyleFrame(hMC, "", "Events");
     hMC->GetXaxis()->SetLabelSize(0);
     hMC->GetYaxis()->SetTitleOffset(1.35);
-    hMC->SetMinimum(0.5);
-    hMC->SetMaximum(2.0* std::max(hMC->GetMaximum(), hAcc->GetMaximum()));
+    hMC->SetMinimum(0);
+    hMC->SetMaximum(1.3 * std::max(hMC->GetMaximum(), hAcc->GetMaximum()));
     hMC->Draw("HIST");
     hAcc->Draw("HIST SAME");
-    //drawGapLines(hMC);
-    TLegend* leg = MakeLegend(0.60, 0.55, 0.75, 0.72);
+   // drawGapLines(hMC);
+    TLegend* leg = MakeLegend(0.20, 0.55, 0.45, 0.72);
     leg->AddEntry(hMC,  "MC truth", "l");
     leg->AddEntry(hAcc, "MC accepted", "l");
     leg->Draw();
     gPad->RedrawAxis();
-    
-    DrawEPICLabel(0.6,0.85);
+    DrawEPICLabel();
     TLatex* t = new TLatex();
     t->SetNDC();
     t->SetTextFont(42);
     t->SetTextSize(0.045);
-    t->DrawLatex(0.60, 0.40, Form("Efficiency: %.1f%%", eff));
-    t->DrawLatex(0.60, 0.35, Form("E_{#gamma} > 1 GeV"));
-    t->DrawLatex(0.60, 0.30, Form("#eta_{#gamma} < 1.3 or > 1.6", nAcc));
+    t->DrawLatex(0.20, 0.40, Form("Efficiency: %.1f%%", eff));
+    t->DrawLatex(0.20, 0.35, Form("E_{#gamma} > 0.1 GeV"));
+  //  t->DrawLatex(0.20, 0.30, Form("#eta_{#gamma} < 1.3 or > 1.6", nAcc));
 
     // ---- dol: ratio ----
     pBot->cd();
@@ -221,7 +224,7 @@ static void drawEfficiency(TFile* f,std::string val) {
     r->Draw("E");
     TLine* one = new TLine(r->GetXaxis()->GetXmin(), 1.0, r->GetXaxis()->GetXmax(), 1.0);
     one->SetLineStyle(2); one->SetLineWidth(2); one->Draw();
-    //drawGapLines(r);
+   // drawGapLines(r);
     gPad->RedrawAxis();
 
     cv->cd();
@@ -258,13 +261,18 @@ static void draw2D(TFile* f, const char* var, const char* cat, const char* label
   });
 }
 
-// ---------------------------------------------------------------- 5) good / w oknie per grupa: counts na gorze, fraction na dole
 static void drawGood(TFile* f) {
   TH1D* hWin  = GetHist<TH1D>(f, "h_grp");
   TH1D* hGood = GetHist<TH1D>(f, "h_grpGood");
   if (!hWin || !hGood) return;
 
-  save("good",1000, 1000, [&]() {
+  // klon do dolnego panelu robimy PRZED ustawieniem szerokosci slupkow
+  TH1D* hFrac = (TH1D*)hGood->Clone("h_grpFrac");
+  hFrac->SetDirectory(0);
+  hFrac->Divide(hGood, hWin, 1, 1, "B");
+  hFrac->Scale(100.0);
+
+  save("good", 1000, 1000, [&]() {
     TVirtualPad* cv = gPad;
     TPad* pTop = new TPad("pTop", "", 0, 0.30, 1, 1.0);
     TPad* pBot = new TPad("pBot", "", 0, 0.00, 1, 0.30);
@@ -274,40 +282,38 @@ static void drawGood(TFile* f) {
     pBot->SetTopMargin(0.03);   pBot->SetBottomMargin(0.25);
     pTop->Draw(); pBot->Draw();
 
-    // ---- gora: liczby ----
+    // ---- gora: liczby, dwa slupki obok siebie ----
     pTop->cd();
-    StyleHist(hWin,  kBlue + 1);   hWin->SetFillColorAlpha(kBlue + 1, 0.30);
-    StyleHist(hGood, kGreen + 2);  hGood->SetFillColorAlpha(kGreen + 2, 0.50);
+    StyleHist(hWin,  kBlue + 1);   hWin->SetFillColorAlpha(kBlue + 1, 0.60);   hWin->SetFillStyle(1001);
+    StyleHist(hGood, kGreen + 2);  hGood->SetFillColorAlpha(kGreen + 2, 0.60); hGood->SetFillStyle(1001);
+    hWin->SetBarWidth(0.4);  hWin->SetBarOffset(0.1);    // lewy slupek: 0.1-0.5 binu
+    hGood->SetBarWidth(0.4); hGood->SetBarOffset(0.5);   // prawy slupek: 0.5-0.9 binu
     StyleFrame(hWin, "", "Number of #pi^{0}");
     hWin->GetXaxis()->SetLabelSize(0);   // etykiety grup tylko na dolnym padzie
     hWin->SetMinimum(0);
     hWin->SetMaximum(1.3 * std::max(hWin->GetMaximum(), hGood->GetMaximum()));
-    hWin->Draw("HIST");
-    hGood->Draw("HIST SAME");
-    TLegend* leg = MakeLegend(0.40, 0.62, 0.85, 0.90, 0.045);
-  leg->AddEntry(hWin,  "#splitline{#pi^{0} in mass window (3#sigma)}{obtained in each method}", "f");
-leg->AddEntry(hGood, "#splitline{Good direction}{#DeltaR(#pi^{0}_{reco}, #pi^{0}_{MC}) < 0.2}", "f");
+    hWin->Draw("BAR");
+    hGood->Draw("BAR SAME");
+    TLegend* leg = MakeLegend(0.60, 0.62, 0.95, 0.90, 0.045);
+    leg->AddEntry(hWin,  "#splitline{#pi^{0} in mass window (3#sigma)}{0.095<m_{#gamma#gamma}<0.167}", "f");
+    leg->AddEntry(hGood, "#DeltaR(#pi^{0}_{reco}, #pi^{0}_{MC}) < 0.1", "f");
     leg->Draw();
     gPad->RedrawAxis();
 
     // ---- dol: odsetek good ----
     pBot->cd();
-    TH1D* hFrac = (TH1D*)hGood->Clone("h_grpFrac");
-    hFrac->SetDirectory(0);
-    hFrac->Divide(hGood, hWin, 1, 1, "B");
-    hFrac->Scale(100.0);
     StyleHist(hFrac, kOrange + 7);
     hFrac->SetFillColorAlpha(kOrange + 1, 0.40);
     hFrac->SetMarkerStyle(20); hFrac->SetMarkerSize(1.0);
-    StyleFrame(hFrac, "", "Good / window [%]");
-    hFrac->GetXaxis()->SetLabelSize(0.15);
-    hFrac->GetYaxis()->SetLabelSize(0.075); hFrac->GetYaxis()->SetTitleSize(0.12);
-    hFrac->GetYaxis()->SetTitleOffset(0.6);
+    StyleFrame(hFrac, "", "Purity [%]");
+    hFrac->GetXaxis()->SetLabelSize(0.085);
+    hFrac->GetYaxis()->SetLabelSize(0.075); hFrac->GetYaxis()->SetTitleSize(0.085);
+    hFrac->GetYaxis()->SetTitleOffset(0.75);
     hFrac->GetYaxis()->SetNdivisions(505);
     hFrac->SetMinimum(0); hFrac->SetMaximum(135);
     hFrac->Draw("HIST");
     hFrac->Draw("E1 SAME");
-    TLatex txt; txt.SetTextAlign(21); txt.SetTextFont(42); txt.SetTextSize(0.1);
+    TLatex txt; txt.SetTextAlign(21); txt.SetTextFont(42); txt.SetTextSize(0.065);
     std::cout << "\nGrupa            w oknie    good   good/w oknie\n";
     for (int i = 1; i <= hFrac->GetNbinsX(); ++i) {
       const double nWin = hWin->GetBinContent(i), nGood = hGood->GetBinContent(i);
@@ -320,8 +326,38 @@ leg->AddEntry(hGood, "#splitline{Good direction}{#DeltaR(#pi^{0}_{reco}, #pi^{0}
     cv->cd();
   });
 }
+
+static void drawPi0DR(TFile* f) {
+  TH1D* h = GetHist<TH1D>(f, "h_pi0_dr");
+  if (!h || h->GetEntries() <= 0) return;
+  save("pi0_dr", 900, 800, [&]() {
+    SetPad1D(gPad, true);
+    StyleHist(h, kBlue + 1);
+    h->SetFillColorAlpha(kBlue + 1, 0.30);
+    StyleFrame(h, "#DeltaR(#pi^{0}_{MC}, #pi^{0}_{reco})", "Events");
+    h->SetMinimum(0.5);
+    h->SetMaximum(h->GetMaximum() * 8.0);
+    h->Draw("HIST");
+
+    const double ymax = h->GetMaximum();
+    TLine* l1 = new TLine(0.1, 0.5, 0.1, ymax);
+    l1->SetLineColor(kRed + 1); l1->SetLineStyle(2); l1->SetLineWidth(3); l1->Draw();
+    TLine* l2 = new TLine(0.2, 0.5, 0.2, ymax);
+    l2->SetLineColor(kGreen + 2); l2->SetLineStyle(2); l2->SetLineWidth(3); l2->Draw();
+
+    const double n = h->Integral(0, h->GetNbinsX() + 1);
+    const double f1 = n > 0 ? 100.0 * h->Integral(1, h->FindBin(0.1 - 1e-9)) / n : 0;
+    const double f2 = n > 0 ? 100.0 * h->Integral(1, h->FindBin(0.2 - 1e-9)) / n : 0;
+    TLegend* leg = MakeLegend(0.50, 0.72, 0.96, 0.90, 0.040);
+    leg->AddEntry(l1, Form("#DeltaR < 0.1: %.1f%%", f1), "l");
+    leg->AddEntry(l2, Form("#DeltaR < 0.2: %.1f%%", f2), "l");
+    leg->Draw();
+    gPad->RedrawAxis();
+    DrawEPICLabel(0.60, 0.6);
+  });
+}
 // =============================================================================
-void draw(const std::string& in_file = "pi0_simple_old.root") {
+void draw(const std::string& in_file = "pi0_eta_cut.root") {
   SetGlobalStyle();
   gSystem->mkdir(kDir, kTRUE);
   TFile* f = TFile::Open(in_file.c_str());
@@ -334,8 +370,7 @@ void draw(const std::string& in_file = "pi0_simple_old.root") {
   drawCum(f, "cum_pi0_eta", "cum_eta",  "#eta_{#pi^{0}}");
   drawCum(f, "cum_pi0_m",   "cum_mass", "m_{#gamma#gamma} [GeV]");
 
-  drawEfficiency(f, "eta");
-  drawEfficiency(f, "E");
+  drawEfficiency(f);
 
   for (int i = 0; i < 3; ++i) {
     draw2D(f, "E",   kCat[i], kCatLabel[i], "E_{#pi^{0}}^{MC} [GeV]", "E_{#pi^{0}}^{reco} [GeV]");
@@ -343,5 +378,6 @@ void draw(const std::string& in_file = "pi0_simple_old.root") {
   }
 
   drawGood(f);
+  drawPi0DR(f);
   std::cout << "\nWszystkie wykresy zapisane w " << kDir << "/\n";
 }
